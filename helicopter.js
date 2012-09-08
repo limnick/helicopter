@@ -80,6 +80,11 @@ Heli.User = function (params) {
         position = 50;
         _trail = [];
         momentum = 0;
+        dists = [];
+        dist_trails = [];
+        window._randloc = 0;
+        window._randlist = [];
+        window._allready = false;
     }
 
     function move(thrusters) {
@@ -89,11 +94,11 @@ Heli.User = function (params) {
         momentum += ((thrusters) ? 0.4 : -0.5);
         position += momentum;
 
-        if (params.tick() % 2 === 0) {
+        //if (params.tick() % 2 === 0) {
             _trail.push(position);
-        }
+        //}
 
-        if (_trail.length > 4) {
+        if (_trail.length > 8) {
             _trail.shift();
         }
 
@@ -167,26 +172,32 @@ Heli.Screen = function (params) {
     }
 
     function randomNum(low, high) {
-        return low + Math.floor(Math.random() * (high - low));
+      //pull values from server sent list of  random values every update
+        var rval = window._randlist[window._randloc++];
+        if (!rval) {
+          rval = 0.0;
+        }
+        return low + Math.floor(rval * (high - low));
     }
 
     function moveTerrain() {
 
         var toAdd, len, rand,
             last = _terrain[Math.round(_terrain.length-1)];
-
-        if (_randomBlock === null) {
-            rand = Math.floor(Math.random() * 50);
-            if (params.tick() % rand === 0) {
-                _randomBlock = _numLines;
-                _blockY = randomNum(last.bottom, 100-last.top);
-            }
-        } else {
-            _randomBlock -= 1;
-            if (_randomBlock < 0) {
-                _randomBlock = null;
-            }
-        }
+        
+        //TODO: multiplayer block
+        //if (_randomBlock === null) {
+        //    rand = Math.floor(Math.random() * 50);
+        //    if (params.tick() % rand === 0) {
+        //        _randomBlock = _numLines;
+        //        _blockY = randomNum(last.bottom, 100-last.top);
+        //    }
+        //} else {
+        //    _randomBlock -= 1;
+        //    if (_randomBlock < 0) {
+        //        _randomBlock = null;
+        //    }
+        //}
 
         if (changeDir === 0) {
             _direction = (_direction === Heli.Dir.DOWN) ? Heli.Dir.UP : Heli.Dir.DOWN;
@@ -242,22 +253,25 @@ Heli.Screen = function (params) {
 
     }
 
-    function drawUser(ctx, user, trail, alternate) {
+    function drawUser(ctx, user, trail, alternate, dists, dist_trails) {
 
-        var i, len, mid, image;
-
-//         for (i = trail.length - 1, len = trail.length; i > 0; i -= 1) {
+        var i, len, mid, image, oldga;
+        image = (alternate && params.tick()) % 4 < 2 ? img : img2;
+        oldga = ctx.globalAlpha;
+        ctx.globalAlpha = 0.2;
+         for (i = trail.length - 1, len = trail.length; i > 0; i -= 1) {
 //             ctx.fillStyle = "rgba(255, 255, 255, " + (i / len) + ")";
-//             ctx.beginPath();
-//             ctx.drawImage(cloud,
-//                           (_width * .25) - ((len - i) * (_lineWidth * 2)),
-//                           toPix(trail[i-1]));
+             ctx.beginPath();
+             ctx.drawImage(image,
+                           (_width * .25) - _lineWidth*2 - ((len - i) * (_lineWidth)),
+                           toPix(trail[i-1]));
 
-// //            ctx.arc((_width * .25) - ((len - i) * (_lineWidth * 2)),
-//   //                  toPix(trail[i-1]), 5, 0, Math.PI * 2, false);
-//             ctx.fill();
-//             ctx.closePath();
-//        }
+//             ctx.arc((_width * .25) - ((len - i) * (_lineWidth * 2)),
+//                     toPix(trail[i-1]), 5, 0, Math.PI * 2, false);
+             ctx.fill();
+             ctx.closePath();
+        }
+        ctx.globalAlpha = oldga;
 
         mid = Math.round(_terrain.length * 0.25);
         image = (alternate && params.tick()) % 4 < 2 ? img : img2;
@@ -268,6 +282,41 @@ Heli.Screen = function (params) {
                       toPix(user) - (heliHeight / 2));
         ctx.fill();
         ctx.closePath();
+        
+        oldga = ctx.globalAlpha;
+        ctx.globalAlpha = 0.05;
+        dists.forEach(function(u) {
+          ctx.beginPath();
+          ctx.drawImage(image, mid * _lineWidth - 40,
+                        toPix(u) - (heliHeight / 2));
+          ctx.fill();
+          ctx.closePath();
+        });
+        ctx.globalAlpha = oldga;
+        
+        oldga = ctx.globalAlpha;
+        ctx.globalAlpha = 0.05;
+        for (i = dist_trails.length - 1, len = dist_trails.length; i > 0; i -= 1) {
+//             ctx.fillStyle = "rgba(255, 255, 255, " + (i / len) + ")";
+             
+             dtrail = dist_trails[i-1];
+             
+             dtrail.forEach(function(t) {
+               ctx.beginPath();
+               ctx.drawImage(image,
+                              (_width * .25) - _lineWidth*2 - ((len - i) * (_lineWidth)),
+                              toPix(t));
+               ctx.fill();
+               ctx.closePath();
+             });
+        }
+        ctx.globalAlpha = oldga;
+             
+
+//             ctx.arc((_width * .25) - ((len - i) * (_lineWidth * 2)),
+//                     toPix(trail[i-1]), 5, 0, Math.PI * 2, false);
+             
+      
     }
 
     function collided(pos) {
@@ -418,9 +467,16 @@ var HELICOPTER = (function() {
         audio       = null,
         screen      = null,
         user        = null,
+        sock        = null,
         pos         = 0,
         died        = 0,
-       _tick        = 0;
+       _tick        = 0,
+       _servertick  = 0;
+       dists        = [];
+       dist_trails  = [];
+       window._randlist    = [];
+       window._randloc     = 0;
+       window._allready = false;
 
     function keyDown(e) {
 
@@ -431,17 +487,17 @@ var HELICOPTER = (function() {
 
         if (e.keyCode === KEY.S) {
             localStorage.soundDisabled = !soundDisabled();
-        } else if (state === Heli.State.WAITING && e.keyCode === KEY.ENTER) {
-            newGame();
-        } else if (state === Heli.State.PLAYING && e.keyCode === KEY.P) {
-            state = Heli.State.PAUSED;
-            window.clearInterval(timer);
-            timer = null;
-            dialog("Paused");
-        } else if (state === Heli.State.PAUSED && e.keyCode === KEY.P) {
-            state = Heli.State.PLAYING;
-            timer = window.setInterval(mainLoop, 1000/Heli.FPS);
-        }
+        }// else if (state === Heli.State.WAITING && window._allready) {
+        //   newGame();
+        //} else if (state === Heli.State.PLAYING && e.keyCode === KEY.P) {
+        //    state = Heli.State.PAUSED;
+        //    window.clearInterval(timer);
+        //    timer = null;
+        //    dialog("Paused");
+        //} else if (state === Heli.State.PAUSED && e.keyCode === KEY.P) {
+        //    state = Heli.State.PLAYING;
+        //    timer = window.setInterval(mainLoop, 1000/Heli.FPS);
+        //}
     }
 
     function keyUp(e) {
@@ -474,6 +530,7 @@ var HELICOPTER = (function() {
             screen.init();
             timer = window.setInterval(mainLoop, 1000/Heli.FPS);
             state = Heli.State.PLAYING;
+            updateState();
         }
     }
 
@@ -491,6 +548,10 @@ var HELICOPTER = (function() {
         return localStorage.soundDisabled === "true";
     }
 
+    function updateState() {
+        sock.send(JSON.stringify([0.0, state]));
+    }
+
     function mainLoop() {
 
         ++_tick;
@@ -498,6 +559,22 @@ var HELICOPTER = (function() {
         if (state === Heli.State.PLAYING) {
 
             pos = user.move(thrustersOn);
+            sock.send(JSON.stringify([Math.round(pos*100)/100, state]));
+            if (dists.length === 0) {
+              dists = [];
+              for (var i = 0; i < 10; i++) {
+                dists.push(pos);
+              }
+            }
+            dist_trails.push(dists);
+            if (dist_trails.length > 8) {
+                dist_trails.shift();
+            }
+            //var tdists = [];
+            //dists.forEach(function(d) {
+            //  tdists.push(d + (Math.random() > 0.5 ? -1 : 1)*(Math.random()*2) + (Math.random() > 0.5 ? 0 : 1)*(d > pos ? -1 : 1)*(Math.abs(d - pos)/10.0))
+            //});
+            //dists = tdists;
             screen.moveTerrain();
 
             screen.draw(ctx);
@@ -510,22 +587,24 @@ var HELICOPTER = (function() {
                 }
                 audio.play("crash");
                 state = Heli.State.DYING;
+                updateState();
                 died = _tick;
                 user.finished();
             }
-            screen.drawUser(ctx, pos, user.trail(), true);
+            screen.drawUser(ctx, pos, user.trail(), true, dists, dist_trails);
 
         } else if (state === Heli.State.DYING && (_tick - died) > (Heli.FPS / 1)) {
             dialog("Press enter to start again.");
 
             state = Heli.State.WAITING;
+            updateState();
             window.clearInterval(timer);
             timer = null;
         } else if (state === Heli.State.DYING) {
 
             screen.draw(ctx);
             screen.drawTerrain(ctx);
-            screen.drawUser(ctx, pos, user.trail(), false);
+            screen.drawUser(ctx, pos, user.trail(), false, dists, dist_trails);
 
             screen.drawTarget(ctx, pos, _tick - died);
         }
@@ -592,6 +671,35 @@ var HELICOPTER = (function() {
         ];
 
         load(audio_files, function () { loaded(); });
+        
+        //init websocket
+        var wsuri = "ws://192.168.1.35:9000";
+        
+        sock = new WebSocket(wsuri);
+
+        sock.onopen = function() {
+          console.log("connected to " + wsuri);
+        }
+
+        sock.onclose = function(e) {
+          console.log("connection closed (" + e.code + ")");
+        }
+
+        sock.onmessage = function(msg) {
+          parseddata = JSON.parse(msg.data);
+
+          _servertick = parseddata[0];
+          if (window._randlist[0] != parseddata[1][0]) {
+            window._randloc = 0;
+          }
+          window._randlist = parseddata[1];
+          dists = parseddata[2];
+          window._allready = parseddata[3];
+          if (window._allready == true) {
+             newGame();
+          }
+        };
+        
     }
 
     function load(arr, loaded) {
